@@ -9,19 +9,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+    - uses: actions/checkout@v3
 
     - name: Login to Docker Hub
       run: echo "${{ secrets.DOCKER_PASS }}" | docker login -u "${{ secrets.DOCKER_USER }}" --password-stdin
 
     - name: Build image
-      run: docker build -t twojlogin/backend-pay-flow:latest .
+      run: docker build -t keyn1990/backend-pay-flow:latest .
 
     - name: Push image
-      run: docker push twojlogin/backend-pay-flow:latest
+      run: docker push keyn1990/backend-pay-flow:latest
 
-    - name: Deploy on VPS
+    - name: Deploy
       uses: appleboy/ssh-action@v1.0.0
       with:
         host: 192.67.197.185
