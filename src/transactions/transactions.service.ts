@@ -79,8 +79,15 @@ export class TransactionsService {
     }
 
     async getHistory(userId: string) {
+        const user = await this.usersService.findById(userId)
+
         return this.transactionModel
-            .find({ senderId: userId })
+            .find({
+                $or: [
+                    { senderId: userId },
+                    { receiverAccount: user.login },
+                ],
+            })
             .sort({ createdAt: -1 })
     }
 
