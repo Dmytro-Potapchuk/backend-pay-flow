@@ -5,12 +5,10 @@ import { JwtModule } from '@nestjs/jwt'
 import { UsersModule } from '../users/users.module'
 import { JwtStrategy } from './jwt.strategy'
 import { ConfigModule, ConfigService } from '@nestjs/config'
-import { MessagesModule } from '../messages/messages.module'
 
 @Module({
   imports: [
     UsersModule,
-    MessagesModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({

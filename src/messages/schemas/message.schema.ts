@@ -6,9 +6,8 @@ export type MessageType = 'success' | 'error' | 'info'
 
 @Schema({ timestamps: true })
 export class Message {
-
     @Prop({ required: true })
-    userId: string
+    conversationId: string
 
     @Prop()
     senderId?: string
@@ -16,17 +15,23 @@ export class Message {
     @Prop()
     senderLogin?: string
 
-    @Prop({ required: true })
-    title: string
+    @Prop()
+    title?: string
 
     @Prop({ required: true })
     content: string
 
-    @Prop({ default: false })
-    read: boolean
-
     @Prop({ enum: ['success', 'error', 'info'], default: 'info' })
     type: MessageType
+
+    @Prop({ type: [String], default: [] })
+    readBy: string[]
+
+    @Prop({ type: [String], default: [] })
+    deletedFor: string[]
+
+    createdAt?: Date
+    updatedAt?: Date
 }
 
 export const MessageSchema = SchemaFactory.createForClass(Message)
