@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common'
 import { InjectModel } from '@nestjs/mongoose'
 import { Model } from 'mongoose'
-import { Message, MessageDocument } from './schemas/message.schema'
+import { Message, MessageDocument, MessageType } from './schemas/message.schema'
 import { UsersService } from '../users/users.service'
 
 @Injectable()
@@ -13,7 +13,14 @@ export class MessagesService {
         private usersService: UsersService,
     ) {}
 
-    async create(senderId: string, senderLogin: string, receiverLogin: string, title: string, content: string) {
+    async create(
+        senderId: string,
+        senderLogin: string,
+        receiverLogin: string,
+        title: string,
+        content: string,
+        type: MessageType = 'info',
+    ) {
 
         const receiver = await this.usersService.findByLogin(receiverLogin)
 
@@ -27,6 +34,23 @@ export class MessagesService {
             senderLogin,
             title,
             content,
+            type,
+        })
+
+        return message.save()
+    }
+
+    async createSystemNotification(
+        userId: string,
+        title: string,
+        content: string,
+        type: MessageType = 'info',
+    ) {
+        const message = new this.messageModel({
+            userId,
+            title,
+            content,
+            type,
         })
 
         return message.save()

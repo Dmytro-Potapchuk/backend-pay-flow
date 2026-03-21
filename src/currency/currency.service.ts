@@ -1,12 +1,16 @@
 import { Injectable, HttpException, BadRequestException } from '@nestjs/common'
 import { UsersService } from '../users/users.service'
+import { MessagesService } from '../messages/messages.service'
 
 @Injectable()
 export class CurrencyService {
 
     private API = 'https://api.nbp.pl/api/exchangerates/tables/A'
 
-    constructor(private usersService: UsersService) {}
+    constructor(
+        private usersService: UsersService,
+        private messagesService: MessagesService,
+    ) {}
 
     async getRates() {
 
@@ -39,6 +43,16 @@ export class CurrencyService {
         }
 
         const user = await this.usersService.findById(userId)
+
+        await this.messagesService
+            .createSystemNotification(
+                userId,
+                'Wymiana walut',
+                `Kupiono ${foreignAmount.toFixed(2)} ${currencyCode}.`,
+                'success',
+            )
+            .catch(() => null)
+
         return {
             success: true,
             balance: user.balance,

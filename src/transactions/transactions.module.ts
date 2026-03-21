@@ -4,10 +4,12 @@ import { TransactionsController } from './transactions.controller'
 import { MongooseModule } from '@nestjs/mongoose'
 import { Transaction, TransactionSchema } from './schemas/transaction.schema'
 import { UsersModule } from '../users/users.module'
+import { MessagesModule } from '../messages/messages.module'
 
 @Module({
   imports: [
     UsersModule,
+    MessagesModule,
     MongooseModule.forFeature([
       { name: Transaction.name, schema: TransactionSchema }
     ])
