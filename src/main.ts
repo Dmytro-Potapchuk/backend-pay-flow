@@ -6,9 +6,19 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 async function bootstrap() {
   const app = await NestFactory.create(AppModule)
   const logger = new Logger('Bootstrap')
+  const frontendUrl = process.env.FRONTEND_PUBLIC_URL || 'https://dom.payflow.waw.pl'
+
+  app.getHttpAdapter().getInstance().set('trust proxy', 1)
 
   app.enableCors({
-    origin: "*",
+    origin: [
+      frontendUrl,
+      'http://localhost:8081',
+      'http://localhost:19006',
+      'http://192.67.197.185:8081',
+      'http://192.67.197.185:19006',
+    ],
+    credentials: true,
   });
 
   app.useGlobalPipes(new ValidationPipe())
