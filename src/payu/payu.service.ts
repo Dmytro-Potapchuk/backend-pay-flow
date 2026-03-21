@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common'
+import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common'
 import axios from 'axios'
 import { TransactionsService } from '../transactions/transactions.service'
 
@@ -27,6 +27,40 @@ export class PayuService {
             orderId?: string
             extOrderId?: string
             status?: string
+        }
+    }
+
+    private appendExternalOrderId(baseUrl: string, externalOrderId: string) {
+        try {
+            if (baseUrl.startsWith('http://') || baseUrl.startsWith('https://')) {
+                const url = new URL(baseUrl)
+                url.searchParams.set('extOrderId', externalOrderId)
+                return url.toString()
+            }
+
+            const separator = baseUrl.includes('?') ? '&' : '?'
+            return `${baseUrl}${separator}extOrderId=${encodeURIComponent(externalOrderId)}`
+        } catch {
+            const separator = baseUrl.includes('?') ? '&' : '?'
+            return `${baseUrl}${separator}extOrderId=${encodeURIComponent(externalOrderId)}`
+        }
+    }
+
+    private async getOrderDetails(orderId: string) {
+        const token = await this.getToken()
+
+        const response = await axios.get(`${this.api}/api/v2_1/orders/${orderId}`, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: 'application/json',
+            },
+            validateStatus: (status) => status >= 200 && status < 500,
+        })
+
+        return response.data as {
+            status?: { statusCode?: string }
+            orders?: Array<{ status?: string }>
+            orderId?: string
         }
     }
 
@@ -71,7 +105,11 @@ export class PayuService {
         userLogin: string,
         amount: number,
         email: string,
-        urls?: { backendBaseUrl?: string; frontendBaseUrl?: string },
+        urls?: {
+            backendBaseUrl?: string
+            frontendBaseUrl?: string
+            continueUrl?: string
+        },
     ) {
         const token = await this.getToken()
         const pendingTopUp = await this.transactionsService.createPendingPayuTopUp(
@@ -79,6 +117,7 @@ export class PayuService {
             userLogin,
             amount,
         )
+        const externalOrderId = pendingTopUp.externalOrderId ?? ''
         const normalizedAmount = String(Math.round(amount * 100))
         const backendBaseUrl =
             process.env.BACKEND_PUBLIC_URL ||
@@ -88,16 +127,24 @@ export class PayuService {
             process.env.FRONTEND_PUBLIC_URL ||
             urls?.frontendBaseUrl ||
             'http://localhost'
+        const continueUrlBase =
+            urls?.continueUrl ||
+            process.env.PAYU_CONTINUE_URL ||
+            `${frontendBaseUrl}/payu-result`
+        const continueUrl = this.appendExternalOrderId(
+            continueUrlBase,
+            externalOrderId,
+        )
 
         const order = {
             notifyUrl: process.env.PAYU_NOTIFY_URL || `${backendBaseUrl}/payu/notify`,
-            continueUrl: process.env.PAYU_CONTINUE_URL || frontendBaseUrl,
+            continueUrl,
             customerIp: '127.0.0.1',
             merchantPosId: this.posId,
             description: 'PayFlow payment',
             currencyCode: 'PLN',
             totalAmount: normalizedAmount,
-            extOrderId: pendingTopUp.externalOrderId,
+            extOrderId: externalOrderId,
             buyer: {
                 email,
                 firstName: 'Test',
@@ -146,9 +193,9 @@ export class PayuService {
                 `PayU order status: ${response.status}, redirect: ${redirectUrl ?? 'missing'}`,
             )
 
-            if (pendingTopUp.externalOrderId) {
+            if (externalOrderId) {
                 await this.transactionsService.attachPayuOrderIds(
-                    pendingTopUp.externalOrderId,
+                    externalOrderId,
                     providerOrderId,
                 )
             }
@@ -160,12 +207,15 @@ export class PayuService {
                 })
             }
 
-            return { redirectUrl }
+            return {
+                redirectUrl,
+                externalOrderId,
+            }
         } catch (error) {
             if (error instanceof BadRequestException) {
-                if (pendingTopUp.externalOrderId) {
+                if (externalOrderId) {
                     await this.transactionsService.markPayuTopUpStatus(
-                        pendingTopUp.externalOrderId,
+                        externalOrderId,
                         'failed',
                     )
                 }
@@ -181,9 +231,9 @@ export class PayuService {
                 `PayU order error: ${axiosError.message ?? 'unknown error'}`,
             )
 
-            if (pendingTopUp.externalOrderId) {
+            if (externalOrderId) {
                 await this.transactionsService.markPayuTopUpStatus(
-                    pendingTopUp.externalOrderId,
+                    externalOrderId,
                     'failed',
                 )
             }
@@ -231,6 +281,68 @@ export class PayuService {
             received: true,
             status,
             extOrderId: order.extOrderId,
+        }
+    }
+
+    async confirmPayment(userId: string, externalOrderId: string) {
+        const transaction = await this.transactionsService.findPayuTopUpForUser(
+            userId,
+            externalOrderId,
+        )
+
+        if (!transaction) {
+            throw new ForbiddenException('Payment not found')
+        }
+
+        if (transaction.status === 'completed') {
+            return {
+                status: 'COMPLETED',
+                externalOrderId,
+                balanceApplied: true,
+            }
+        }
+
+        if (!transaction.providerOrderId) {
+            return {
+                status: transaction.status?.toUpperCase() ?? 'PENDING',
+                externalOrderId,
+                balanceApplied: false,
+            }
+        }
+
+        const orderDetails = await this.getOrderDetails(transaction.providerOrderId)
+        const orderStatus =
+            orderDetails.orders?.[0]?.status ||
+            orderDetails.status?.statusCode ||
+            transaction.status
+
+        const normalizedStatus = String(orderStatus ?? 'PENDING').toUpperCase()
+
+        if (normalizedStatus === 'COMPLETED' || normalizedStatus === 'SUCCESS') {
+            await this.transactionsService.completePayuTopUp(
+                externalOrderId,
+                transaction.providerOrderId,
+            )
+
+            return {
+                status: 'COMPLETED',
+                externalOrderId,
+                balanceApplied: true,
+            }
+        }
+
+        if (normalizedStatus === 'CANCELED') {
+            await this.transactionsService.markPayuTopUpStatus(
+                externalOrderId,
+                'canceled',
+                transaction.providerOrderId,
+            )
+        }
+
+        return {
+            status: normalizedStatus,
+            externalOrderId,
+            balanceApplied: false,
         }
     }
 }

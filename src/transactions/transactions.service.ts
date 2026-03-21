@@ -101,6 +101,14 @@ export class TransactionsService {
         return savedTransaction
     }
 
+    async findPayuTopUpForUser(userId: string, externalOrderId: string) {
+        return this.transactionModel.findOne({
+            senderId: userId,
+            externalOrderId,
+            type: 'payu_transfer',
+        })
+    }
+
     async bankTransfer(userId: string, receiverLogin: string, amount: number) {
 
         const sender = await this.usersService.findById(userId)
@@ -169,6 +177,7 @@ export class TransactionsService {
 
         return this.transactionModel
             .find({
+                status: 'completed',
                 $or: [
                     { senderId: userId },
                     { receiverAccount: user.login },

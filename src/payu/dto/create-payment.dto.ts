@@ -1,4 +1,4 @@
-import { IsNumber, IsEmail, Min } from 'class-validator'
+import { IsEmail, IsNumber, IsOptional, IsString, Min } from 'class-validator'
 import { ApiProperty } from '@nestjs/swagger'
 
 export class CreatePaymentDto {
@@ -11,4 +11,13 @@ export class CreatePaymentDto {
     @ApiProperty({ example: 'user@example.com' })
     @IsEmail()
     email: string
+
+    @ApiProperty({
+        example: 'payflow://payu-result',
+        required: false,
+        description: 'Optional return URL for native app builds',
+    })
+    @IsOptional()
+    @IsString()
+    continueUrl?: string
 }

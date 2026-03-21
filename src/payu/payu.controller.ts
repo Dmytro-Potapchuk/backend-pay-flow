@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Post, Req, UseGuards } from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, Param, Post, Req, UseGuards } from '@nestjs/common'
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger'
 import type { Request } from 'express'
 import { PayuService } from './payu.service'
@@ -37,6 +37,7 @@ export class PayuController {
             {
                 backendBaseUrl,
                 frontendBaseUrl,
+                continueUrl: dto.continueUrl,
             },
         )
     }
@@ -46,5 +47,15 @@ export class PayuController {
     @Post('notify')
     handleNotify(@Body() payload: unknown) {
         return this.payuService.handleNotification(payload)
+    }
+
+    @ApiOperation({ summary: 'Confirm PayU payment status for current user' })
+    @UseGuards(JwtAuthGuard)
+    @Get('confirm/:externalOrderId')
+    confirmPayment(
+        @Param('externalOrderId') externalOrderId: string,
+        @Req() req: Request & RequestWithUser,
+    ) {
+        return this.payuService.confirmPayment(req.user.userId, externalOrderId)
     }
 }
