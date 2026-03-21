@@ -27,6 +27,17 @@ jobs:
         username: root
         key: ${{ secrets.SSH_KEY }}
         script: |
+          set -e
           cd /root/bankflay
+
+          echo "🚨 STOP old containers"
+          docker-compose down || true
+
+          echo "⬇️ PULL new images"
           docker-compose pull
+
+          echo "🚀 START new containers"
           docker-compose up -d
+
+          echo "🔍 STATUS"
+          docker ps
