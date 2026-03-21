@@ -15,6 +15,92 @@ export class TransactionsService {
         private messagesService: MessagesService,
     ) {}
 
+    async createPendingPayuTopUp(
+        userId: string,
+        receiverLogin: string,
+        amount: number,
+    ) {
+        const externalOrderId = `PAYFLOW-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 10)}`
+
+        const transaction = new this.transactionModel({
+            senderId: userId,
+            receiverAccount: receiverLogin,
+            amount,
+            type: 'payu_transfer',
+            status: 'pending',
+            externalOrderId,
+        })
+
+        return transaction.save()
+    }
+
+    async attachPayuOrderIds(
+        externalOrderId: string,
+        providerOrderId?: string,
+    ) {
+        if (!providerOrderId) {
+            return
+        }
+
+        await this.transactionModel.findOneAndUpdate(
+            { externalOrderId },
+            { providerOrderId },
+        )
+    }
+
+    async markPayuTopUpStatus(
+        externalOrderId: string,
+        status: 'pending' | 'canceled' | 'failed',
+        providerOrderId?: string,
+    ) {
+        const transaction = await this.transactionModel.findOne({ externalOrderId })
+
+        if (!transaction) {
+            return null
+        }
+
+        transaction.status = status
+        if (providerOrderId) {
+            transaction.providerOrderId = providerOrderId
+        }
+
+        return transaction.save()
+    }
+
+    async completePayuTopUp(externalOrderId: string, providerOrderId?: string) {
+        const transaction = await this.transactionModel.findOne({ externalOrderId })
+
+        if (!transaction) {
+            return null
+        }
+
+        if (transaction.status === 'completed') {
+            return transaction
+        }
+
+        await this.usersService.addBalancePln(transaction.senderId, transaction.amount)
+
+        transaction.status = 'completed'
+        if (providerOrderId) {
+            transaction.providerOrderId = providerOrderId
+        }
+
+        const savedTransaction = await transaction.save()
+
+        await this.messagesService
+            .createSystemNotification(
+                transaction.senderId,
+                'Doładowanie PayU',
+                `Doładowanie ${transaction.amount.toFixed(2)} PLN zostało zaksięgowane.`,
+                'success',
+            )
+            .catch(() => null)
+
+        return savedTransaction
+    }
+
     async bankTransfer(userId: string, receiverLogin: string, amount: number) {
 
         const sender = await this.usersService.findById(userId)

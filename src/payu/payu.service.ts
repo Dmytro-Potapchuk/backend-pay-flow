@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common'
 import axios from 'axios'
+import { TransactionsService } from '../transactions/transactions.service'
 
 @Injectable()
 export class PayuService {
@@ -9,6 +10,25 @@ export class PayuService {
     private clientId = process.env.PAYU_CLIENT_ID
     private clientSecret = process.env.PAYU_CLIENT_SECRET
     private posId = process.env.PAYU_POS_ID
+
+    constructor(private transactionsService: TransactionsService) {}
+
+    private extractOrder(payload: unknown) {
+        if (!payload || typeof payload !== 'object' || !('order' in payload)) {
+            return null
+        }
+
+        const order = payload.order
+        if (!order || typeof order !== 'object') {
+            return null
+        }
+
+        return order as {
+            orderId?: string
+            extOrderId?: string
+            status?: string
+        }
+    }
 
     async getToken() {
         try {
@@ -47,11 +67,18 @@ export class PayuService {
     }
 
     async createPayment(
+        userId: string,
+        userLogin: string,
         amount: number,
         email: string,
         urls?: { backendBaseUrl?: string; frontendBaseUrl?: string },
     ) {
         const token = await this.getToken()
+        const pendingTopUp = await this.transactionsService.createPendingPayuTopUp(
+            userId,
+            userLogin,
+            amount,
+        )
         const normalizedAmount = String(Math.round(amount * 100))
         const backendBaseUrl =
             process.env.BACKEND_PUBLIC_URL ||
@@ -70,6 +97,7 @@ export class PayuService {
             description: 'PayFlow payment',
             currencyCode: 'PLN',
             totalAmount: normalizedAmount,
+            extOrderId: pendingTopUp.externalOrderId,
             buyer: {
                 email,
                 firstName: 'Test',
@@ -106,10 +134,24 @@ export class PayuService {
                 (typeof response.headers.location === 'string'
                     ? response.headers.location
                     : undefined)
+            const providerOrderId =
+                typeof data === 'object' &&
+                data &&
+                'orderId' in data &&
+                typeof data.orderId === 'string'
+                    ? data.orderId
+                    : undefined
 
             this.logger.log(
                 `PayU order status: ${response.status}, redirect: ${redirectUrl ?? 'missing'}`,
             )
+
+            if (pendingTopUp.externalOrderId) {
+                await this.transactionsService.attachPayuOrderIds(
+                    pendingTopUp.externalOrderId,
+                    providerOrderId,
+                )
+            }
 
             if (!redirectUrl) {
                 throw new BadRequestException({
@@ -121,6 +163,12 @@ export class PayuService {
             return { redirectUrl }
         } catch (error) {
             if (error instanceof BadRequestException) {
+                if (pendingTopUp.externalOrderId) {
+                    await this.transactionsService.markPayuTopUpStatus(
+                        pendingTopUp.externalOrderId,
+                        'failed',
+                    )
+                }
                 throw error
             }
 
@@ -133,11 +181,56 @@ export class PayuService {
                 `PayU order error: ${axiosError.message ?? 'unknown error'}`,
             )
 
+            if (pendingTopUp.externalOrderId) {
+                await this.transactionsService.markPayuTopUpStatus(
+                    pendingTopUp.externalOrderId,
+                    'failed',
+                )
+            }
+
             throw new BadRequestException({
                 message: 'PayU order failed',
                 status: axiosError.response?.status,
                 payu: axiosError.response?.data ?? null,
             })
+        }
+    }
+
+    async handleNotification(payload: unknown) {
+        const order = this.extractOrder(payload)
+
+        if (!order?.extOrderId) {
+            return {
+                received: true,
+                ignored: true,
+            }
+        }
+
+        const status = order.status?.toUpperCase() ?? 'UNKNOWN'
+
+        if (status === 'COMPLETED') {
+            await this.transactionsService.completePayuTopUp(
+                order.extOrderId,
+                order.orderId,
+            )
+        } else if (status === 'CANCELED') {
+            await this.transactionsService.markPayuTopUpStatus(
+                order.extOrderId,
+                'canceled',
+                order.orderId,
+            )
+        } else {
+            await this.transactionsService.markPayuTopUpStatus(
+                order.extOrderId,
+                'pending',
+                order.orderId,
+            )
+        }
+
+        return {
+            received: true,
+            status,
+            extOrderId: order.extOrderId,
         }
     }
 }

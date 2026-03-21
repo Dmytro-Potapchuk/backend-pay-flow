@@ -124,6 +124,18 @@ export class UsersService {
         ).select('-password')
     }
 
+    async addBalancePln(userId: string, amount: number) {
+        const user = await this.userModel.findByIdAndUpdate(
+            userId,
+            { $inc: { balance: amount } },
+            { new: true },
+        ).select('-password')
+
+        if (!user) throw new NotFoundException('User not found')
+
+        return user
+    }
+
     async addBalanceEur(userId: string, amount: number) {
         const user = await this.userModel.findByIdAndUpdate(
             userId,

@@ -18,8 +18,14 @@ export class Transaction {
     @Prop({ enum: ['bank_transfer', 'payu_transfer'], required: true })
     type: string
 
-    @Prop({ default: 'completed' })
+    @Prop({ enum: ['pending', 'completed', 'canceled', 'failed'], default: 'completed' })
     status: string
+
+    @Prop({ unique: true, sparse: true })
+    externalOrderId?: string
+
+    @Prop({ sparse: true })
+    providerOrderId?: string
 }
 
 export const TransactionSchema = SchemaFactory.createForClass(Transaction)
