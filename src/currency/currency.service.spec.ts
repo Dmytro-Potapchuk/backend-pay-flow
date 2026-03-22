@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing'
 import { HttpException, BadRequestException } from '@nestjs/common'
 import { CurrencyService } from './currency.service'
 import { UsersService } from '../users/users.service'
+import { MessagesService } from '../messages/messages.service'
 
 const mockFetch = jest.fn()
 
@@ -22,6 +23,12 @@ describe('CurrencyService', () => {
                         addBalanceEur: jest.fn(),
                         addBalanceUsd: jest.fn(),
                         findById: jest.fn(),
+                    },
+                },
+                {
+                    provide: MessagesService,
+                    useValue: {
+                        createSystemNotification: jest.fn().mockResolvedValue(undefined),
                     },
                 },
             ],

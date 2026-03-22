@@ -178,7 +178,7 @@ export class PayuService {
                     'redirectUri' in data &&
                     typeof data.redirectUri === 'string' &&
                     data.redirectUri) ||
-                (typeof response.headers.location === 'string'
+                (typeof response.headers?.location === 'string'
                     ? response.headers.location
                     : undefined)
             const providerOrderId =

@@ -3,12 +3,19 @@ import { getModelToken } from '@nestjs/mongoose'
 import { BadRequestException } from '@nestjs/common'
 import { TransactionsService } from './transactions.service'
 import { UsersService } from '../users/users.service'
+import { MessagesService } from '../messages/messages.service'
 import { Transaction } from './schemas/transaction.schema'
 
 describe('TransactionsService', () => {
     let service: TransactionsService
-    let transactionModel: { find: jest.Mock; findById: jest.Mock }
+    let transactionModel: {
+        find: jest.Mock
+        findById: jest.Mock
+        findOne: jest.Mock
+        findOneAndUpdate: jest.Mock
+    }
     let usersService: jest.Mocked<UsersService>
+    let messagesService: jest.Mocked<MessagesService>
 
     const mockSender = {
         _id: 'sender123',
@@ -37,6 +44,8 @@ describe('TransactionsService', () => {
         transactionModel = {
             find: jest.fn(),
             findById: jest.fn(),
+            findOne: jest.fn(),
+            findOneAndUpdate: jest.fn(),
         }
 
         const saveMock = jest.fn().mockResolvedValue(mockTransaction)
@@ -57,6 +66,13 @@ describe('TransactionsService', () => {
                     useValue: {
                         findById: jest.fn(),
                         findByLogin: jest.fn(),
+                        addBalancePln: jest.fn(),
+                    },
+                },
+                {
+                    provide: MessagesService,
+                    useValue: {
+                        createSystemNotification: jest.fn().mockResolvedValue(null),
                     },
                 },
             ],
@@ -64,11 +80,156 @@ describe('TransactionsService', () => {
 
         service = module.get<TransactionsService>(TransactionsService)
         usersService = module.get(UsersService)
+        messagesService = module.get(MessagesService)
         jest.clearAllMocks()
     })
 
     it('should be defined', () => {
         expect(service).toBeDefined()
+    })
+
+    describe('createPendingPayuTopUp', () => {
+        it('should create pending PayU top-up with generated external order id', async () => {
+            const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1700000000000)
+            const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.123456789)
+
+            const result = await service.createPendingPayuTopUp('sender123', 'jan', 250)
+
+            expect(result).toEqual(mockTransaction)
+            expect(nowSpy).toHaveBeenCalled()
+            expect(randomSpy).toHaveBeenCalled()
+        })
+    })
+
+    describe('attachPayuOrderIds', () => {
+        it('should skip update when provider order id is missing', async () => {
+            await expect(
+                service.attachPayuOrderIds('PAYFLOW-123'),
+            ).resolves.toBeUndefined()
+            expect(transactionModel.findOneAndUpdate).not.toHaveBeenCalled()
+        })
+
+        it('should update transaction with provider order id', async () => {
+            transactionModel.findOneAndUpdate.mockResolvedValue({} as never)
+
+            await service.attachPayuOrderIds('PAYFLOW-123', 'ORDER-1')
+
+            expect(transactionModel.findOneAndUpdate).toHaveBeenCalledWith(
+                { externalOrderId: 'PAYFLOW-123' },
+                { providerOrderId: 'ORDER-1' },
+            )
+        })
+    })
+
+    describe('markPayuTopUpStatus', () => {
+        it('should return null when transaction does not exist', async () => {
+            transactionModel.findOne.mockResolvedValue(null)
+
+            await expect(
+                service.markPayuTopUpStatus('PAYFLOW-123', 'failed'),
+            ).resolves.toBeNull()
+        })
+
+        it('should update status and provider order id', async () => {
+            const transaction = {
+                status: 'pending',
+                providerOrderId: undefined,
+                save: jest.fn().mockResolvedValue({ status: 'canceled' }),
+            }
+            transactionModel.findOne.mockResolvedValue(transaction as never)
+
+            const result = await service.markPayuTopUpStatus(
+                'PAYFLOW-123',
+                'canceled',
+                'ORDER-2',
+            )
+
+            expect(transaction.status).toBe('canceled')
+            expect(transaction.providerOrderId).toBe('ORDER-2')
+            expect(transaction.save).toHaveBeenCalled()
+            expect(result).toEqual({ status: 'canceled' })
+        })
+    })
+
+    describe('completePayuTopUp', () => {
+        it('should return null when transaction does not exist', async () => {
+            transactionModel.findOne.mockResolvedValue(null)
+
+            await expect(service.completePayuTopUp('PAYFLOW-123')).resolves.toBeNull()
+        })
+
+        it('should return existing transaction when already completed', async () => {
+            const transaction = {
+                status: 'completed',
+            }
+            transactionModel.findOne.mockResolvedValue(transaction as never)
+
+            const result = await service.completePayuTopUp('PAYFLOW-123')
+
+            expect(usersService.addBalancePln).not.toHaveBeenCalled()
+            expect(result).toBe(transaction)
+        })
+
+        it('should complete top-up and send notification', async () => {
+            const transaction = {
+                senderId: 'sender123',
+                amount: 100,
+                status: 'pending',
+                providerOrderId: undefined,
+                save: jest.fn().mockResolvedValue({ status: 'completed' }),
+            }
+            usersService.addBalancePln = jest.fn().mockResolvedValue({} as never)
+            transactionModel.findOne.mockResolvedValue(transaction as never)
+
+            const result = await service.completePayuTopUp('PAYFLOW-123', 'ORDER-3')
+
+            expect(usersService.addBalancePln).toHaveBeenCalledWith('sender123', 100)
+            expect(transaction.status).toBe('completed')
+            expect(transaction.providerOrderId).toBe('ORDER-3')
+            expect(messagesService.createSystemNotification).toHaveBeenCalledWith(
+                'sender123',
+                'Doładowanie PayU',
+                'Doładowanie 100.00 PLN zostało zaksięgowane.',
+                'success',
+            )
+            expect(result).toEqual({ status: 'completed' })
+        })
+
+        it('should ignore notification failure after balance update', async () => {
+            const transaction = {
+                senderId: 'sender123',
+                amount: 50,
+                status: 'pending',
+                save: jest.fn().mockResolvedValue({ status: 'completed' }),
+            }
+            usersService.addBalancePln = jest.fn().mockResolvedValue({} as never)
+            transactionModel.findOne.mockResolvedValue(transaction as never)
+            messagesService.createSystemNotification.mockRejectedValue(
+                new Error('notification failed'),
+            )
+
+            await expect(
+                service.completePayuTopUp('PAYFLOW-123'),
+            ).resolves.toEqual({ status: 'completed' })
+        })
+    })
+
+    describe('findPayuTopUpForUser', () => {
+        it('should query PayU top-up by user and external order id', async () => {
+            transactionModel.findOne.mockResolvedValue(mockTransaction as never)
+
+            const result = await service.findPayuTopUpForUser(
+                'sender123',
+                'PAYFLOW-123',
+            )
+
+            expect(transactionModel.findOne).toHaveBeenCalledWith({
+                senderId: 'sender123',
+                externalOrderId: 'PAYFLOW-123',
+                type: 'payu_transfer',
+            })
+            expect(result).toEqual(mockTransaction)
+        })
     })
 
     describe('bankTransfer', () => {
@@ -124,6 +285,12 @@ describe('TransactionsService', () => {
             await expect(
                 service.bankTransfer('sender123', 'anna', 100),
             ).rejects.toThrow('Insufficient funds')
+            expect(messagesService.createSystemNotification).toHaveBeenCalledWith(
+                'sender123',
+                'Przelew odrzucony',
+                'Niewystarczające środki na koncie – doładuj konto',
+                'error',
+            )
         })
 
         it('should perform transfer and create transaction', async () => {
@@ -138,6 +305,21 @@ describe('TransactionsService', () => {
             expect(receiver.save).toHaveBeenCalled()
             expect(sender.balance).toBe(900)
             expect(receiver.balance).toBe(600)
+            expect(messagesService.createSystemNotification).toHaveBeenNthCalledWith(
+                1,
+                'sender123',
+                'Przelew',
+                'Przelew zakończony sukcesem',
+                'success',
+            )
+            expect(messagesService.createSystemNotification).toHaveBeenNthCalledWith(
+                2,
+                'receiver456',
+                'Nowy przelew',
+                'Otrzymałeś 100.00 PLN od jan.',
+                'info',
+            )
+            expect(result).toEqual(mockTransaction)
         })
     })
 
@@ -145,13 +327,22 @@ describe('TransactionsService', () => {
         it('should return transactions sorted by createdAt', async () => {
             const sortMock = jest.fn().mockResolvedValue([mockTransaction])
             transactionModel.find.mockReturnValue({ sort: sortMock })
+            usersService.findById.mockResolvedValue({
+                ...mockSender,
+                login: 'jan',
+            } as never)
 
             const result = await service.getHistory('sender123')
 
             expect(transactionModel.find).toHaveBeenCalledWith({
-                senderId: 'sender123',
+                status: 'completed',
+                $or: [
+                    { senderId: 'sender123' },
+                    { receiverAccount: 'jan' },
+                ],
             })
             expect(sortMock).toHaveBeenCalledWith({ createdAt: -1 })
+            expect(result).toEqual([mockTransaction])
         })
     })
 

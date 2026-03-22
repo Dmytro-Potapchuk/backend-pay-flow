@@ -23,7 +23,7 @@ export class Conversation {
     @Prop()
     lastMessageAt?: Date
 
-    @Prop({ enum: ['success', 'error', 'info'], default: 'info' })
+    @Prop({ type: String, enum: ['success', 'error', 'info'], default: 'info' })
     lastMessageType?: MessageType
 
     createdAt?: Date
