@@ -15,8 +15,8 @@ import { UsersService } from './users.service'
 import { RolesGuard } from '../common/guards/roles.guard'
 import { Roles } from '../common/decorators/roles.decorator'
 
-import type { UpdateBalanceDto } from './dto/update-balance.dto'
-import type { UpdateRoleDto } from './dto/update-role.dto'
+import { UpdateBalanceDto } from './dto/update-balance.dto'
+import { UpdateRoleDto } from './dto/update-role.dto'
 import type { RequestWithUser } from '../common/interfaces/jwt-payload.interface'
 
 @ApiTags('Users')

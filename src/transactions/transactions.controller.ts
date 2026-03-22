@@ -2,7 +2,7 @@ import { Controller, Post, Get, Param, Body, UseGuards, Request } from '@nestjs/
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger'
 import { TransactionsService } from './transactions.service'
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard'
-import type { CreateTransferDto } from './dto/create-transfer.dto'
+import { CreateTransferDto } from './dto/create-transfer.dto'
 import type  { RequestWithUser } from '../common/interfaces/jwt-payload.interface'
 
 @ApiTags('Transactions')

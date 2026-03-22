@@ -7,6 +7,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule)
   const logger = new Logger('Bootstrap')
   const frontendUrl = process.env.FRONTEND_PUBLIC_URL || 'https://dom.payflow.waw.pl'
+  const swaggerUiPaths = ['api', 'docs']
 
   app.getHttpAdapter().getInstance().set('trust proxy', 1)
 
@@ -31,7 +32,9 @@ async function bootstrap() {
       .build()
 
   const document = SwaggerModule.createDocument(app, swaggerConfig)
-  SwaggerModule.setup('api', app, document)
+  swaggerUiPaths.forEach((path) => {
+    SwaggerModule.setup(path, app, document)
+  })
 
   const PORT = process.env.PORT || 3000
 
@@ -41,6 +44,7 @@ async function bootstrap() {
 
   logger.log(`🚀 Server running: ${serverUrl}`)
   logger.log(`📚 Swagger docs: ${serverUrl}/api`)
+  logger.log(`📚 Swagger docs (alias): ${serverUrl}/docs`)
 }
 
 bootstrap()
