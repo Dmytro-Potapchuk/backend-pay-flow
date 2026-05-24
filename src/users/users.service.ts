@@ -64,7 +64,8 @@ export class UsersService {
         return this.userModel
             .find(filter)
             .select('_id login email role')
-            .limit(20)
+            .sort({ login: 1 })
+            .limit(normalizedQuery ? 50 : 200)
     }
 
     async update(id: string, data: Partial<{ login: string; email: string; password: string; phone: string; role: string }>) {
