@@ -1,6 +1,6 @@
 import { ValidationPipe } from './validation.pipe'
 import { ArgumentMetadata, BadRequestException } from '@nestjs/common'
-import { IsString, IsInt, Min } from 'class-validator'
+import { IsString, IsInt, Min, IsOptional } from 'class-validator'
 
 class TestDto {
     @IsString()
@@ -9,6 +9,10 @@ class TestDto {
     @IsInt()
     @Min(1)
     age: number
+
+    @IsOptional()
+    @IsString()
+    note?: string
 }
 
 describe('ValidationPipe', () => {
@@ -65,6 +69,24 @@ describe('ValidationPipe', () => {
         const result = await pipe.transform(value, metadata)
 
         expect(result).toEqual(value)
+    })
+
+    it('should reject unknown fields', async () => {
+        const value = {
+            name: 'John',
+            age: 25,
+            role: 'admin',
+        }
+
+        const metadata: ArgumentMetadata = {
+            type: 'body',
+            metatype: TestDto,
+            data: '',
+        }
+
+        await expect(pipe.transform(value, metadata)).rejects.toThrow(
+            BadRequestException,
+        )
     })
 
     it('should throw BadRequestException when validation fails', async () => {

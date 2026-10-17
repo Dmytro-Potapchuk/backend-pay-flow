@@ -77,9 +77,13 @@ describe('DashboardService', () => {
 
         it('should return dashboard data', async () => {
             usersService.findById.mockResolvedValue(mockUser as never)
-            transactionsService.getHistory.mockResolvedValue(
-                mockTransactions as never,
-            )
+            transactionsService.getHistory.mockResolvedValue({
+                items: mockTransactions.slice(0, 5),
+                page: 1,
+                limit: 5,
+                total: mockTransactions.length,
+                hasMore: false,
+            } as never)
             messagesService.unreadCount.mockResolvedValue(2)
 
             const result = await service.getDashboard('user123')
@@ -87,6 +91,8 @@ describe('DashboardService', () => {
             expect(usersService.findById).toHaveBeenCalledWith('user123')
             expect(transactionsService.getHistory).toHaveBeenCalledWith(
                 'user123',
+                1,
+                5,
             )
             expect(messagesService.unreadCount).toHaveBeenCalledWith('user123')
             expect(result).toEqual({
@@ -105,9 +111,9 @@ describe('DashboardService', () => {
                 type: 'bank_transfer',
             }))
             usersService.findById.mockResolvedValue(mockUser as never)
-            transactionsService.getHistory.mockResolvedValue(
-                manyTransactions as never,
-            )
+            transactionsService.getHistory.mockResolvedValue({
+                items: manyTransactions.slice(0, 5),
+            } as never)
             messagesService.unreadCount.mockResolvedValue(0)
 
             const result = await service.getDashboard('user123')

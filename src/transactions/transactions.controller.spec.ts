@@ -75,6 +75,8 @@ describe('TransactionsController', () => {
 
             expect(transactionsService.getHistory).toHaveBeenCalledWith(
                 'user123',
+                1,
+                20,
             )
             expect(result).toEqual([mockTransaction])
         })
@@ -86,10 +88,14 @@ describe('TransactionsController', () => {
                 mockTransaction as never,
             )
 
-            const result = await controller.getTransaction('tx1')
+            const result = await controller.getTransaction(
+                'tx1',
+                mockRequest as never,
+            )
 
             expect(transactionsService.getTransaction).toHaveBeenCalledWith(
                 'tx1',
+                'user123',
             )
             expect(result).toEqual(mockTransaction)
         })

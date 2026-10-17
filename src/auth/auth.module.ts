@@ -5,6 +5,7 @@ import { JwtModule } from '@nestjs/jwt'
 import { UsersModule } from '../users/users.module'
 import { JwtStrategy } from './jwt.strategy'
 import { ConfigModule, ConfigService } from '@nestjs/config'
+import { AuthRateLimitGuard } from './auth-rate-limit.guard'
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config'
       inject: [ConfigService],
     }),
   ],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, AuthRateLimitGuard],
   controllers: [AuthController],
 })
 export class AuthModule {}

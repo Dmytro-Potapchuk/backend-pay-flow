@@ -5,13 +5,20 @@ import { MessagesGateway } from './messages.gateway'
 describe('MessagesGateway', () => {
     let gateway: MessagesGateway
     let jwtService: { verifyAsync: jest.Mock }
+    let conversationModel: { findById: jest.Mock }
 
     beforeEach(() => {
         jwtService = {
             verifyAsync: jest.fn(),
         }
+        conversationModel = {
+            findById: jest.fn(),
+        }
 
-        gateway = new MessagesGateway(jwtService as unknown as JwtService)
+        gateway = new MessagesGateway(
+            jwtService as unknown as JwtService,
+            conversationModel as never,
+        )
     })
 
     it('should be defined', () => {
@@ -77,20 +84,46 @@ describe('MessagesGateway', () => {
     })
 
     describe('conversation rooms', () => {
-        it('should join conversation room when id exists', () => {
-            const socket = { join: jest.fn() }
+        it('should join conversation room only for a participant', async () => {
+            const socket = {
+                join: jest.fn(),
+                data: { user: { userId: 'user-1' } },
+            }
+            conversationModel.findById.mockReturnValue({
+                select: jest.fn().mockResolvedValue({
+                    participantIds: ['user-1', 'user-2'],
+                }),
+            })
 
-            gateway.handleJoinConversation(socket as never, {
+            await gateway.handleJoinConversation(socket as never, {
                 conversationId: 'conv-1',
             })
 
             expect(socket.join).toHaveBeenCalledWith('conversation:conv-1')
         })
 
-        it('should ignore join when conversation id is missing', () => {
-            const socket = { join: jest.fn() }
+        it('should ignore join when the user is not a participant', async () => {
+            const socket = {
+                join: jest.fn(),
+                data: { user: { userId: 'stranger' } },
+            }
+            conversationModel.findById.mockReturnValue({
+                select: jest.fn().mockResolvedValue({
+                    participantIds: ['user-1'],
+                }),
+            })
 
-            gateway.handleJoinConversation(socket as never, {})
+            await gateway.handleJoinConversation(socket as never, {
+                conversationId: 'conv-1',
+            })
+
+            expect(socket.join).not.toHaveBeenCalled()
+        })
+
+        it('should ignore join when conversation id is missing', async () => {
+            const socket = { join: jest.fn(), data: { user: { userId: 'user-1' } } }
+
+            await gateway.handleJoinConversation(socket as never, {})
 
             expect(socket.join).not.toHaveBeenCalled()
         })

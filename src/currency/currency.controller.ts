@@ -3,6 +3,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger'
 import { CurrencyService } from './currency.service'
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard'
 import { BuyCurrencyDto } from './dto/buy-currency.dto'
+import { SellCurrencyDto } from './dto/sell-currency.dto'
 import type { RequestWithUser } from '../common/interfaces/jwt-payload.interface'
 
 @ApiTags('Currency')
@@ -23,6 +24,14 @@ export class CurrencyController {
     @UseGuards(JwtAuthGuard)
     buy(@Body() dto: BuyCurrencyDto, @Req() req: RequestWithUser) {
         return this.currencyService.buyCurrency(req.user.userId, dto.amountPln, dto.currencyCode)
+    }
+
+    @ApiOperation({ summary: 'Sell foreign currency (EUR/USD) back to PLN' })
+    @ApiBearerAuth()
+    @Post('sell')
+    @UseGuards(JwtAuthGuard)
+    sell(@Body() dto: SellCurrencyDto, @Req() req: RequestWithUser) {
+        return this.currencyService.sellCurrency(req.user.userId, dto.amount, dto.currencyCode)
     }
 
 }

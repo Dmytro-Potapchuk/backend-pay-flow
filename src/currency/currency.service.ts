@@ -1,6 +1,7 @@
 import { Injectable, HttpException, BadRequestException } from '@nestjs/common'
 import { UsersService } from '../users/users.service'
 import { MessagesService } from '../messages/messages.service'
+import { roundMoney } from '../common/money'
 
 @Injectable()
 export class CurrencyService {
@@ -32,17 +33,18 @@ export class CurrencyService {
         if (!rate) {
             throw new BadRequestException(`Currency ${currencyCode} not found in NBP rates`)
         }
-        const mid = rate.mid
-        const foreignAmount = amountPln / mid
-
-        await this.usersService.deductPln(userId, amountPln)
-        if (currencyCode === 'EUR') {
-            await this.usersService.addBalanceEur(userId, foreignAmount)
-        } else {
-            await this.usersService.addBalanceUsd(userId, foreignAmount)
+        if (currencyCode !== 'EUR' && currencyCode !== 'USD') {
+            throw new BadRequestException('Only EUR and USD can be purchased')
         }
 
-        const user = await this.usersService.findById(userId)
+        const normalizedPln = roundMoney(amountPln)
+        const foreignAmount = roundMoney(normalizedPln / rate.mid)
+        const user = await this.usersService.exchangePlnForCurrency(
+            userId,
+            normalizedPln,
+            currencyCode,
+            foreignAmount,
+        )
 
         await this.messagesService
             .createSystemNotification(
@@ -59,6 +61,46 @@ export class CurrencyService {
             balanceEur: user.balanceEur ?? 0,
             balanceUsd: user.balanceUsd ?? 0,
             boughtAmount: foreignAmount,
+            currencyCode,
+        }
+    }
+
+    async sellCurrency(userId: string, amountForeign: number, currencyCode: string) {
+        const rates = await this.getRates()
+        interface NbpRate { code: string; mid: number }
+        const rate = (rates as NbpRate[]).find((item) => item.code === currencyCode)
+        if (!rate) {
+            throw new BadRequestException(`Currency ${currencyCode} not found in NBP rates`)
+        }
+        if (currencyCode !== 'EUR' && currencyCode !== 'USD') {
+            throw new BadRequestException('Only EUR and USD can be sold')
+        }
+
+        const foreignAmount = roundMoney(amountForeign)
+        const plnAmount = roundMoney(foreignAmount * rate.mid)
+        const user = await this.usersService.sellForeignForPln(
+            userId,
+            currencyCode,
+            foreignAmount,
+            plnAmount,
+        )
+
+        await this.messagesService
+            .createSystemNotification(
+                userId,
+                'Wymiana walut',
+                `Sprzedano ${foreignAmount.toFixed(2)} ${currencyCode} za ${plnAmount.toFixed(2)} PLN.`,
+                'success',
+            )
+            .catch(() => null)
+
+        return {
+            success: true,
+            balance: user.balance,
+            balanceEur: user.balanceEur ?? 0,
+            balanceUsd: user.balanceUsd ?? 0,
+            soldAmount: foreignAmount,
+            plnAmount,
             currencyCode,
         }
     }

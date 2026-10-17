@@ -20,7 +20,7 @@ export class DashboardService {
             throw new NotFoundException('User not found')
         }
 
-        const transactions = await this.transactionsService.getHistory(userId)
+        const transactions = await this.transactionsService.getHistory(userId, 1, 5)
 
         const unreadMessages = await this.messagesService.unreadCount(userId)
 
@@ -28,7 +28,7 @@ export class DashboardService {
             balance: user.balance,
             balanceEur: user.balanceEur ?? 0,
             balanceUsd: user.balanceUsd ?? 0,
-            recentTransactions: transactions.slice(0, 5),
+            recentTransactions: transactions.items,
             unreadMessages
         }
     }

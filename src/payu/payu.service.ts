@@ -1,6 +1,15 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common'
+import {
+    BadRequestException,
+    ForbiddenException,
+    Injectable,
+    Logger,
+    UnauthorizedException,
+} from '@nestjs/common'
 import axios from 'axios'
 import { TransactionsService } from '../transactions/transactions.service'
+import { UsersService } from '../users/users.service'
+import { assertPayuNotificationSignature } from './payu-signature'
+import { resolvePayuContinueUrl } from './payu-continue-url'
 
 @Injectable()
 export class PayuService {
@@ -11,7 +20,10 @@ export class PayuService {
     private clientSecret = process.env.PAYU_CLIENT_SECRET
     private posId = process.env.PAYU_POS_ID
 
-    constructor(private transactionsService: TransactionsService) {}
+    constructor(
+        private transactionsService: TransactionsService,
+        private usersService: UsersService,
+    ) {}
 
     private extractOrder(payload: unknown) {
         if (!payload || typeof payload !== 'object' || !('order' in payload)) {
@@ -109,12 +121,14 @@ export class PayuService {
             backendBaseUrl?: string
             frontendBaseUrl?: string
             continueUrl?: string
+            customerIp?: string
         },
     ) {
+        const account = await this.usersService.findById(userId)
         const token = await this.getToken()
         const pendingTopUp = await this.transactionsService.createPendingPayuTopUp(
             userId,
-            userLogin,
+            account.login || userLogin,
             amount,
         )
         const externalOrderId = pendingTopUp.externalOrderId ?? ''
@@ -123,32 +137,26 @@ export class PayuService {
             process.env.BACKEND_PUBLIC_URL ||
             urls?.backendBaseUrl ||
             'http://localhost:3000'
-        const frontendBaseUrl =
-            process.env.FRONTEND_PUBLIC_URL ||
-            urls?.frontendBaseUrl ||
-            'http://localhost'
-        const continueUrlBase =
-            urls?.continueUrl ||
-            process.env.PAYU_CONTINUE_URL ||
-            `${frontendBaseUrl}/payu-result`
+        const continueUrlBase = resolvePayuContinueUrl(urls?.continueUrl)
         const continueUrl = this.appendExternalOrderId(
             continueUrlBase,
             externalOrderId,
         )
+        const customerIp = urls?.customerIp || '127.0.0.1'
 
         const order = {
             notifyUrl: process.env.PAYU_NOTIFY_URL || `${backendBaseUrl}/payu/notify`,
             continueUrl,
-            customerIp: '127.0.0.1',
+            customerIp,
             merchantPosId: this.posId,
             description: 'PayFlow payment',
             currencyCode: 'PLN',
             totalAmount: normalizedAmount,
             extOrderId: externalOrderId,
             buyer: {
-                email,
-                firstName: 'Test',
-                lastName: 'User',
+                email: account.email || email,
+                firstName: (account.login || userLogin).slice(0, 50),
+                lastName: 'PayFlow',
                 language: 'pl',
             },
             products: [
@@ -244,6 +252,19 @@ export class PayuService {
                 payu: axiosError.response?.data ?? null,
             })
         }
+    }
+
+    assertValidNotificationSignature(
+        rawBody: Buffer | undefined,
+        signatureHeader: string | string[] | undefined,
+    ) {
+        const secondKey = process.env.PAYU_SECOND_KEY
+        if (!secondKey) {
+            this.logger.error('PAYU_SECOND_KEY is not configured')
+            throw new UnauthorizedException('Invalid PayU signature')
+        }
+
+        assertPayuNotificationSignature(rawBody, signatureHeader, secondKey)
     }
 
     async handleNotification(payload: unknown) {

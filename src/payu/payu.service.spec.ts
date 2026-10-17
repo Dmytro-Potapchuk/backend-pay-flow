@@ -1,8 +1,10 @@
+import { createHash } from 'crypto'
 import { Test, TestingModule } from '@nestjs/testing'
-import { BadRequestException, ForbiddenException } from '@nestjs/common'
+import { BadRequestException, ForbiddenException, UnauthorizedException } from '@nestjs/common'
 import { PayuService } from './payu.service'
 import axios from 'axios'
 import { TransactionsService } from '../transactions/transactions.service'
+import { UsersService } from '../users/users.service'
 
 jest.mock('axios')
 const mockedAxios = axios as jest.Mocked<typeof axios>
@@ -20,11 +22,22 @@ describe('PayuService', () => {
             PAYU_CLIENT_ID: 'client_id',
             PAYU_CLIENT_SECRET: 'secret',
             PAYU_POS_ID: 'pos123',
+            PAYU_SECOND_KEY: 'second-key',
         }
 
         const module: TestingModule = await Test.createTestingModule({
             providers: [
                 PayuService,
+                {
+                    provide: UsersService,
+                    useValue: {
+                        findById: jest.fn().mockResolvedValue({
+                            _id: 'user123',
+                            login: 'jan',
+                            email: 'profile@test.pl',
+                        }),
+                    },
+                },
                 {
                     provide: TransactionsService,
                     useValue: {
@@ -193,7 +206,8 @@ describe('PayuService', () => {
                 {
                     backendBaseUrl: 'https://api.example.com',
                     frontendBaseUrl: 'https://app.example.com',
-                    continueUrl: '/payu-result?foo=bar',
+                    continueUrl: 'http://evil.example/payu-result',
+                    customerIp: '203.0.113.8',
                 },
             )
 
@@ -207,7 +221,12 @@ describe('PayuService', () => {
                 expect.objectContaining({
                     notifyUrl: 'https://api.example.com/payu/notify',
                     continueUrl:
-                        '/payu-result?foo=bar&extOrderId=PAYFLOW-123',
+                        'https://dom.payflow.waw.pl/payu-result?extOrderId=PAYFLOW-123',
+                    customerIp: '203.0.113.8',
+                    buyer: expect.objectContaining({
+                        email: 'profile@test.pl',
+                        firstName: 'jan',
+                    }),
                     totalAmount: '12345',
                     extOrderId: 'PAYFLOW-123',
                 }),
@@ -240,6 +259,48 @@ describe('PayuService', () => {
                 'PAYFLOW-123',
                 'failed',
             )
+        })
+    })
+
+    describe('assertValidNotificationSignature', () => {
+        it('should accept a PayU MD5 signature of the raw body', () => {
+            const rawBody = Buffer.from('{"order":{"status":"COMPLETED"}}')
+            const signature = createHash('md5')
+                .update(rawBody)
+                .update('second-key')
+                .digest('hex')
+
+            expect(() =>
+                service.assertValidNotificationSignature(
+                    rawBody,
+                    `sender=checkout;signature=${signature};algorithm=MD5;content=DOCUMENT`,
+                ),
+            ).not.toThrow()
+        })
+
+        it('should reject a missing or forged signature', () => {
+            const rawBody = Buffer.from('{"order":{"status":"COMPLETED"}}')
+
+            expect(() =>
+                service.assertValidNotificationSignature(rawBody, undefined),
+            ).toThrow(UnauthorizedException)
+            expect(() =>
+                service.assertValidNotificationSignature(
+                    rawBody,
+                    'sender=checkout;signature=deadbeef;algorithm=MD5;content=DOCUMENT',
+                ),
+            ).toThrow(UnauthorizedException)
+        })
+
+        it('should reject notifications when the second key is not configured', () => {
+            delete process.env.PAYU_SECOND_KEY
+
+            expect(() =>
+                service.assertValidNotificationSignature(
+                    Buffer.from('{}'),
+                    'sender=checkout;signature=abc;algorithm=MD5;content=DOCUMENT',
+                ),
+            ).toThrow(UnauthorizedException)
         })
     })
 

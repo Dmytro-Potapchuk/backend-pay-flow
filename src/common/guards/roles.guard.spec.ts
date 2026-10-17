@@ -45,6 +45,19 @@ describe('RolesGuard', () => {
         expect(result).toBe(true)
     })
 
+    it('should deny access when the request has no user', () => {
+        mockReflector.get.mockReturnValue(['admin'])
+
+        const context = {
+            switchToHttp: () => ({
+                getRequest: () => ({}),
+            }),
+            getHandler: jest.fn(),
+        } as unknown as ExecutionContext
+
+        expect(guard.canActivate(context)).toBe(false)
+    })
+
     it('should deny access when user does not have required role', () => {
         mockReflector.get.mockReturnValue(['admin'])
 

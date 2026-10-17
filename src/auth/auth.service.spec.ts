@@ -72,7 +72,13 @@ describe('AuthService', () => {
                     password: 'hashed_password',
                 }),
             )
-            expect(result).toEqual(mockUser)
+            expect(result).toEqual({
+                _id: 'user123',
+                login: 'jan',
+                email: 'jan@test.pl',
+                role: 'user',
+            })
+            expect(result).not.toHaveProperty('password')
         })
     })
 

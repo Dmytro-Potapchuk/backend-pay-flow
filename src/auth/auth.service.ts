@@ -20,7 +20,17 @@ export class AuthService {
             password: hash,
         })
 
-        return user
+        return this.toPublicUser(user)
+    }
+
+    private toPublicUser(user: object) {
+        const withObject = user as { toObject?: () => Record<string, unknown> }
+        const plain = typeof withObject.toObject === 'function'
+            ? withObject.toObject()
+            : { ...(user as Record<string, unknown>) }
+
+        delete plain.password
+        return plain
     }
 
     async login(login: string, password: string) {

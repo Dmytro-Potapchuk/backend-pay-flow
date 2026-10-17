@@ -19,10 +19,8 @@ describe('CurrencyService', () => {
                 {
                     provide: UsersService,
                     useValue: {
-                        deductPln: jest.fn(),
-                        addBalanceEur: jest.fn(),
-                        addBalanceUsd: jest.fn(),
-                        findById: jest.fn(),
+                        exchangePlnForCurrency: jest.fn(),
+                        sellForeignForPln: jest.fn(),
                     },
                 },
                 {
@@ -93,7 +91,7 @@ describe('CurrencyService', () => {
             await expect(
                 service.buyCurrency('user123', 100, 'CHF'),
             ).rejects.toThrow('Currency CHF not found')
-            expect(usersService.deductPln).not.toHaveBeenCalled()
+            expect(usersService.exchangePlnForCurrency).not.toHaveBeenCalled()
         })
 
         it('should buy EUR and update balances', async () => {
@@ -110,9 +108,7 @@ describe('CurrencyService', () => {
                     ]),
             })
 
-            usersService.deductPln.mockResolvedValue({} as never)
-            usersService.addBalanceEur.mockResolvedValue({} as never)
-            usersService.findById.mockResolvedValue({
+            usersService.exchangePlnForCurrency.mockResolvedValue({
                 balance: 900,
                 balanceEur: 23.2,
                 balanceUsd: 0,
@@ -120,18 +116,18 @@ describe('CurrencyService', () => {
 
             const result = await service.buyCurrency('user123', 100, 'EUR')
 
-            expect(usersService.deductPln).toHaveBeenCalledWith('user123', 100)
-            expect(usersService.addBalanceEur).toHaveBeenCalledWith(
+            expect(usersService.exchangePlnForCurrency).toHaveBeenCalledWith(
                 'user123',
-                100 / 4.31,
+                100,
+                'EUR',
+                23.2,
             )
-            expect(usersService.addBalanceUsd).not.toHaveBeenCalled()
             expect(result).toEqual({
                 success: true,
                 balance: 900,
                 balanceEur: 23.2,
                 balanceUsd: 0,
-                boughtAmount: 100 / 4.31,
+                boughtAmount: 23.2,
                 currencyCode: 'EUR',
             })
         })
@@ -150,9 +146,7 @@ describe('CurrencyService', () => {
                     ]),
             })
 
-            usersService.deductPln.mockResolvedValue({} as never)
-            usersService.addBalanceUsd.mockResolvedValue({} as never)
-            usersService.findById.mockResolvedValue({
+            usersService.exchangePlnForCurrency.mockResolvedValue({
                 balance: 900,
                 balanceEur: 0,
                 balanceUsd: 25,
@@ -160,12 +154,52 @@ describe('CurrencyService', () => {
 
             const result = await service.buyCurrency('user123', 100, 'USD')
 
-            expect(usersService.addBalanceEur).not.toHaveBeenCalled()
-            expect(usersService.addBalanceUsd).toHaveBeenCalledWith(
+            expect(usersService.exchangePlnForCurrency).toHaveBeenCalledWith(
                 'user123',
-                100 / 4.0,
+                100,
+                'USD',
+                25,
             )
             expect(result.currencyCode).toBe('USD')
+            expect(result.boughtAmount).toBe(25)
+        })
+
+        it('should sell EUR back to PLN in one balance update', async () => {
+            mockFetch.mockResolvedValue({
+                ok: true,
+                json: () =>
+                    Promise.resolve([
+                        {
+                            rates: [
+                                { code: 'EUR', mid: 4.31 },
+                                { code: 'USD', mid: 4.0 },
+                            ],
+                        },
+                    ]),
+            })
+            usersService.sellForeignForPln.mockResolvedValue({
+                balance: 1043.1,
+                balanceEur: 0,
+                balanceUsd: 0,
+            } as never)
+
+            const result = await service.sellCurrency('user123', 10, 'EUR')
+
+            expect(usersService.sellForeignForPln).toHaveBeenCalledWith(
+                'user123',
+                'EUR',
+                10,
+                43.1,
+            )
+            expect(result).toEqual({
+                success: true,
+                balance: 1043.1,
+                balanceEur: 0,
+                balanceUsd: 0,
+                soldAmount: 10,
+                plnAmount: 43.1,
+                currencyCode: 'EUR',
+            })
         })
     })
 })

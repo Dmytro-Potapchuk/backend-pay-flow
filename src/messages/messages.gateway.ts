@@ -7,9 +7,15 @@ import {
     WebSocketServer,
 } from '@nestjs/websockets'
 import { JwtService } from '@nestjs/jwt'
+import { InjectModel } from '@nestjs/mongoose'
+import { Model } from 'mongoose'
 import { Server, Socket } from 'socket.io'
 
 import type { JwtPayload } from '../common/interfaces/jwt-payload.interface'
+import {
+    Conversation,
+    ConversationDocument,
+} from './schemas/conversation.schema'
 
 @WebSocketGateway({
     cors: {
@@ -21,7 +27,11 @@ export class MessagesGateway implements OnGatewayConnection {
     @WebSocketServer()
     server: Server
 
-    constructor(private jwtService: JwtService) {}
+    constructor(
+        private jwtService: JwtService,
+        @InjectModel(Conversation.name)
+        private conversationModel: Model<ConversationDocument>,
+    ) {}
 
     private extractToken(socket: Socket) {
         const authToken = socket.handshake.auth?.token
@@ -48,11 +58,20 @@ export class MessagesGateway implements OnGatewayConnection {
     }
 
     @SubscribeMessage('messages:join-conversation')
-    handleJoinConversation(
+    async handleJoinConversation(
         @ConnectedSocket() socket: Socket,
         @MessageBody() body: { conversationId?: string },
     ) {
-        if (!body?.conversationId) {
+        const userId = socket.data.user?.userId as string | undefined
+        if (!userId || !body?.conversationId) {
+            return
+        }
+
+        const conversation = await this.conversationModel
+            .findById(body.conversationId)
+            .select('participantIds')
+
+        if (!conversation?.participantIds?.includes(userId)) {
             return
         }
 

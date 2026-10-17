@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Param, Body, UseGuards, Request } from '@nestjs/common'
+import { Controller, Post, Get, Param, Body, UseGuards, Request, Query } from '@nestjs/common'
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger'
 import { TransactionsService } from './transactions.service'
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard'
@@ -26,14 +26,22 @@ export class TransactionsController {
     @ApiOperation({ summary: 'Get transaction history' })
     @UseGuards(JwtAuthGuard)
     @Get('history')
-    history(@Request() req: RequestWithUser) {
-        return this.transactionsService.getHistory(req.user.userId)
+    history(
+        @Request() req: RequestWithUser,
+        @Query('page') page?: string,
+        @Query('limit') limit?: string,
+    ) {
+        return this.transactionsService.getHistory(
+            req.user.userId,
+            Number(page) || 1,
+            Number(limit) || 20,
+        )
     }
 
     @ApiOperation({ summary: 'Get transaction by ID' })
     @UseGuards(JwtAuthGuard)
     @Get(':id')
-    getTransaction(@Param('id') id: string) {
-        return this.transactionsService.getTransaction(id)
+    getTransaction(@Param('id') id: string, @Request() req: RequestWithUser) {
+        return this.transactionsService.getTransaction(id, req.user.userId)
     }
 }

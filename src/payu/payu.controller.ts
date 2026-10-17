@@ -1,24 +1,26 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Req, UseGuards } from '@nestjs/common'
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger'
-import type { Request } from 'express'
-import { PayuService } from './payu.service'
-import { CreatePaymentDto } from './dto/create-payment.dto'
-import { JwtAuthGuard } from '../common/guards/jwt-auth.guard'
-import type { RequestWithUser } from '../common/interfaces/jwt-payload.interface'
+import * as common from '@nestjs/common'
+import {ApiBearerAuth, ApiOperation, ApiTags} from '@nestjs/swagger'
+import type {Request} from 'express'
+import {PayuService} from './payu.service'
+import {CreatePaymentDto} from './dto/create-payment.dto'
+import {resolveCustomerIp} from './customer-ip'
+import {JwtAuthGuard} from '../common/guards/jwt-auth.guard'
+import type {RequestWithUser} from '../common/interfaces/jwt-payload.interface'
 
 @ApiTags('PayU')
 @ApiBearerAuth()
-@Controller('payu')
+@common.Controller('payu')
 export class PayuController {
 
-    constructor(private payuService: PayuService) {}
+    constructor(private payuService: PayuService) {
+    }
 
-    @ApiOperation({ summary: 'Create PayU payment - returns redirectUrl' })
-    @UseGuards(JwtAuthGuard)
-    @Post('create-payment')
+    @ApiOperation({summary: 'Create PayU payment - returns redirectUrl'})
+    @common.UseGuards(JwtAuthGuard)
+    @common.Post('create-payment')
     async createPayment(
-        @Body() dto: CreatePaymentDto,
-        @Req() req: Request & RequestWithUser,
+        @common.Body() dto: CreatePaymentDto,
+        @common.Req() req: Request & RequestWithUser,
     ) {
         const host = req.get('host') ?? 'localhost:3000'
         const protocol =
@@ -26,8 +28,6 @@ export class PayuController {
             req.protocol ??
             'http'
         const backendBaseUrl = `${protocol}://${host}`
-        const hostname = host.replace(/:\d+$/, '')
-        const frontendBaseUrl = `${protocol}://${hostname}`
 
         return this.payuService.createPayment(
             req.user.userId,
@@ -36,25 +36,27 @@ export class PayuController {
             dto.email,
             {
                 backendBaseUrl,
-                frontendBaseUrl,
                 continueUrl: dto.continueUrl,
+                customerIp: resolveCustomerIp(req),
             },
         )
     }
 
-    @ApiOperation({ summary: 'Receive PayU notifications' })
-    @HttpCode(200)
-    @Post('notify')
-    handleNotify(@Body() payload: unknown) {
-        return this.payuService.handleNotification(payload)
+    @ApiOperation({summary: 'Receive PayU notifications'})
+    @common.HttpCode(200)
+    @common.Post('notify')
+    handleNotify(@common.Req() req: common.RawBodyRequest<Request>) {
+        const signatureHeader = req.headers['openpayu-signature']
+        this.payuService.assertValidNotificationSignature(req.rawBody, signatureHeader)
+        return this.payuService.handleNotification(req.body)
     }
 
-    @ApiOperation({ summary: 'Confirm PayU payment status for current user' })
-    @UseGuards(JwtAuthGuard)
-    @Get('confirm/:externalOrderId')
+    @ApiOperation({summary: 'Confirm PayU payment status for current user'})
+    @common.UseGuards(JwtAuthGuard)
+    @common.Get('confirm/:externalOrderId')
     confirmPayment(
-        @Param('externalOrderId') externalOrderId: string,
-        @Req() req: Request & RequestWithUser,
+        @common.Param('externalOrderId') externalOrderId: string,
+        @common.Req() req: Request & RequestWithUser,
     ) {
         return this.payuService.confirmPayment(req.user.userId, externalOrderId)
     }

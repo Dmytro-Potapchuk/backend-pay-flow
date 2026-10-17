@@ -31,6 +31,8 @@ describe('UsersController', () => {
                         findAll: jest.fn(),
                         updateBalance: jest.fn(),
                         updateRole: jest.fn(),
+                        findPublicByLogin: jest.fn(),
+                        updateOwnProfile: jest.fn(),
                     },
                 },
             ],
@@ -77,13 +79,16 @@ describe('UsersController', () => {
             const updated = { ...mockUser, balance: 1500 }
             usersService.updateBalance.mockResolvedValue(updated as never)
 
-            const result = await controller.updateBalance('user123', {
-                balance: 1500,
-            })
+            const result = await controller.updateBalance(
+                'user123',
+                { balance: 1500 },
+                mockRequest as never,
+            )
 
             expect(usersService.updateBalance).toHaveBeenCalledWith(
                 'user123',
                 1500,
+                'user123',
             )
             expect(result.balance).toBe(1500)
         })

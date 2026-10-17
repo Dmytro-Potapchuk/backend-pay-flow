@@ -4,7 +4,7 @@ import { ValidationPipe, Logger } from '@nestjs/common'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule)
+  const app = await NestFactory.create(AppModule, { rawBody: true })
   const logger = new Logger('Bootstrap')
   const frontendUrl = process.env.FRONTEND_PUBLIC_URL || 'https://dom.payflow.waw.pl'
   const swaggerUiPaths = ['api', 'docs']
@@ -22,19 +22,28 @@ async function bootstrap() {
     credentials: true,
   });
 
-  app.useGlobalPipes(new ValidationPipe())
+  app.useGlobalPipes(new ValidationPipe({
+    whitelist: true,
+    forbidNonWhitelisted: true,
+    transform: true,
+  }))
 
-  const swaggerConfig = new DocumentBuilder()
-      .setTitle('PayFlow API')
-      .setDescription('Backend PayFlow')
-      .setVersion('1.0')
-      .addBearerAuth()
-      .build()
+  if (process.env.NODE_ENV !== 'production') {
+    const swaggerConfig = new DocumentBuilder()
+        .setTitle('PayFlow API')
+        .setDescription('Backend PayFlow')
+        .setVersion('1.0')
+        .addBearerAuth()
+        .build()
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig)
-  swaggerUiPaths.forEach((path) => {
-    SwaggerModule.setup(path, app, document)
-  })
+    const document = SwaggerModule.createDocument(app, swaggerConfig)
+    swaggerUiPaths.forEach((path) => {
+      SwaggerModule.setup(path, app, document)
+    })
+    logger.log(`Swagger docs: http://localhost:${process.env.PORT || 3000}/api`)
+  } else {
+    logger.log('Swagger docs disabled in production')
+  }
 
   const PORT = process.env.PORT || 3000
 
@@ -42,9 +51,7 @@ async function bootstrap() {
 
   const serverUrl = `http://localhost:${PORT}`
 
-  logger.log(`🚀 Server running: ${serverUrl}`)
-  logger.log(`📚 Swagger docs: ${serverUrl}/api`)
-  logger.log(`📚 Swagger docs (alias): ${serverUrl}/docs`)
+  logger.log(`Server running: ${serverUrl}`)
 }
 
 bootstrap()

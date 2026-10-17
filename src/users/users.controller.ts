@@ -5,7 +5,8 @@ import {
     Request,
     Param,
     Patch,
-    Body
+    Body,
+    Query,
 } from '@nestjs/common'
 
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger'
@@ -17,6 +18,7 @@ import { Roles } from '../common/decorators/roles.decorator'
 
 import { UpdateBalanceDto } from './dto/update-balance.dto'
 import { UpdateRoleDto } from './dto/update-role.dto'
+import { UpdateProfileDto } from './dto/update-profile.dto'
 import type { RequestWithUser } from '../common/interfaces/jwt-payload.interface'
 
 @ApiTags('Users')
@@ -34,6 +36,23 @@ export class UsersController {
     @Get('profile')
     getProfile(@Request() req: RequestWithUser) {
         return this.usersService.findById(req.user.userId)
+    }
+
+    @ApiOperation({ summary: 'Find transfer recipient by exact login' })
+    @UseGuards(JwtAuthGuard)
+    @Get('lookup')
+    lookup(@Query('login') login = '') {
+        return this.usersService.findPublicByLogin(login)
+    }
+
+    @ApiOperation({ summary: 'Update own phone or password' })
+    @UseGuards(JwtAuthGuard)
+    @Patch('profile')
+    updateProfile(
+        @Request() req: RequestWithUser,
+        @Body() dto: UpdateProfileDto,
+    ) {
+        return this.usersService.updateOwnProfile(req.user.userId, dto)
     }
 
     /**
@@ -57,8 +76,9 @@ export class UsersController {
     updateBalance(
         @Param('id') id: string,
         @Body() dto: UpdateBalanceDto,
+        @Request() req: RequestWithUser,
     ) {
-        return this.usersService.updateBalance(id, dto.balance)
+        return this.usersService.updateBalance(id, dto.balance, req.user.userId)
     }
 
     /**

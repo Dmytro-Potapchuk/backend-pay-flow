@@ -16,6 +16,7 @@ describe('PayuController', () => {
                         createPayment: jest.fn(),
                         handleNotification: jest.fn(),
                         confirmPayment: jest.fn(),
+                        assertValidNotificationSignature: jest.fn(),
                     },
                 },
             ],
@@ -53,8 +54,8 @@ describe('PayuController', () => {
                 'user@test.pl',
                 {
                     backendBaseUrl: 'https://api.payflow.waw.pl',
-                    frontendBaseUrl: 'https://api.payflow.waw.pl',
                     continueUrl: undefined,
+                    customerIp: '127.0.0.1',
                 },
             )
             expect(result).toEqual({
@@ -65,14 +66,26 @@ describe('PayuController', () => {
     })
 
     describe('handleNotify', () => {
-        it('should delegate PayU notification payload', async () => {
+        it('should verify signature before handling the raw notification', async () => {
+            const rawBody = Buffer.from('{"order":{"extOrderId":"PAYFLOW-123"}}')
             const payload = { order: { extOrderId: 'PAYFLOW-123' } }
+            const req = {
+                rawBody,
+                body: payload,
+                headers: {
+                    'openpayu-signature': 'sender=checkout;signature=abc;algorithm=MD5;content=DOCUMENT',
+                },
+            } as never
             payuService.handleNotification.mockResolvedValue({
                 received: true,
             } as never)
 
-            const result = await controller.handleNotify(payload)
+            const result = await controller.handleNotify(req)
 
+            expect(payuService.assertValidNotificationSignature).toHaveBeenCalledWith(
+                rawBody,
+                'sender=checkout;signature=abc;algorithm=MD5;content=DOCUMENT',
+            )
             expect(payuService.handleNotification).toHaveBeenCalledWith(payload)
             expect(result).toEqual({ received: true })
         })

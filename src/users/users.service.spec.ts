@@ -24,6 +24,7 @@ describe('UsersService', () => {
             findOne: jest.fn(),
             find: jest.fn(),
             findByIdAndUpdate: jest.fn(),
+            findOneAndUpdate: jest.fn(),
         }
 
         const module: TestingModule = await Test.createTestingModule({
@@ -197,6 +198,74 @@ describe('UsersService', () => {
             await expect(
                 service.updateRole('invalid', 'admin'),
             ).rejects.toThrow(NotFoundException)
+        })
+    })
+
+    describe('debitPlnIfSufficient', () => {
+        it('should debit only when the balance covers the amount', async () => {
+            const updatedUser = { ...mockUser, balance: 900 }
+            mockUserModel.findOneAndUpdate.mockReturnValue({
+                select: jest.fn().mockResolvedValue(updatedUser),
+            })
+
+            const result = await service.debitPlnIfSufficient('user123', 100)
+
+            expect(mockUserModel.findOneAndUpdate).toHaveBeenCalledWith(
+                { _id: 'user123', balance: { $gte: 100 } },
+                { $inc: { balance: -100 } },
+                { new: true },
+            )
+            expect(result).toEqual({ ok: true, user: updatedUser })
+        })
+
+        it('should report insufficient funds without changing the balance', async () => {
+            mockUserModel.findOneAndUpdate.mockReturnValue({
+                select: jest.fn().mockResolvedValue(null),
+            })
+            mockUserModel.findById.mockReturnValue({
+                select: jest.fn().mockResolvedValue({ _id: 'user123' }),
+            })
+
+            await expect(service.debitPlnIfSufficient('user123', 100)).resolves.toEqual({
+                ok: false,
+                reason: 'insufficient',
+            })
+        })
+    })
+
+    describe('exchangePlnForCurrency', () => {
+        it('should move PLN and foreign currency in one update', async () => {
+            const updatedUser = { ...mockUser, balance: 900, balanceEur: 23.2 }
+            mockUserModel.findOneAndUpdate.mockReturnValue({
+                select: jest.fn().mockResolvedValue(updatedUser),
+            })
+
+            const result = await service.exchangePlnForCurrency(
+                'user123',
+                100,
+                'EUR',
+                23.2,
+            )
+
+            expect(mockUserModel.findOneAndUpdate).toHaveBeenCalledWith(
+                { _id: 'user123', balance: { $gte: 100 } },
+                { $inc: { balance: -100, balanceEur: 23.2 } },
+                { new: true },
+            )
+            expect(result).toBe(updatedUser)
+        })
+
+        it('should throw when PLN balance is too low', async () => {
+            mockUserModel.findOneAndUpdate.mockReturnValue({
+                select: jest.fn().mockResolvedValue(null),
+            })
+            mockUserModel.findById.mockReturnValue({
+                select: jest.fn().mockResolvedValue({ _id: 'user123' }),
+            })
+
+            await expect(
+                service.exchangePlnForCurrency('user123', 100, 'USD', 25),
+            ).rejects.toBeInstanceOf(BadRequestException)
         })
     })
 

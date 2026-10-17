@@ -1,9 +1,16 @@
-import { Injectable, BadRequestException } from '@nestjs/common'
-import { InjectModel } from '@nestjs/mongoose'
-import { Model } from 'mongoose'
+import {
+    BadRequestException,
+    ForbiddenException,
+    Injectable,
+    NotFoundException,
+} from '@nestjs/common'
+import { InjectConnection, InjectModel } from '@nestjs/mongoose'
+import { Connection, Model } from 'mongoose'
 import { Transaction, TransactionDocument } from './schemas/transaction.schema'
 import { UsersService } from '../users/users.service'
 import { MessagesService } from '../messages/messages.service'
+import { roundMoney } from '../common/money'
+import { runMoneyTransaction } from '../common/mongo-transaction'
 
 @Injectable()
 export class TransactionsService {
@@ -11,6 +18,8 @@ export class TransactionsService {
     constructor(
         @InjectModel(Transaction.name)
         private transactionModel: Model<TransactionDocument>,
+        @InjectConnection()
+        private connection: Connection,
         private usersService: UsersService,
         private messagesService: MessagesService,
     ) {}
@@ -55,50 +64,83 @@ export class TransactionsService {
         status: 'pending' | 'canceled' | 'failed',
         providerOrderId?: string,
     ) {
-        const transaction = await this.transactionModel.findOne({ externalOrderId })
-
-        if (!transaction) {
-            return null
-        }
-
-        transaction.status = status
+        const $set: { status: string; providerOrderId?: string } = { status }
         if (providerOrderId) {
-            transaction.providerOrderId = providerOrderId
+            $set.providerOrderId = providerOrderId
         }
 
-        return transaction.save()
+        const updated = await this.transactionModel.findOneAndUpdate(
+            { externalOrderId, status: { $nin: ['completed', 'canceled'] } },
+            { $set },
+            { new: true },
+        )
+
+        if (updated) {
+            return updated
+        }
+
+        return this.transactionModel.findOne({ externalOrderId })
     }
 
     async completePayuTopUp(externalOrderId: string, providerOrderId?: string) {
-        const transaction = await this.transactionModel.findOne({ externalOrderId })
+        const outcome = await runMoneyTransaction(this.connection, async (session) => {
+            const update: { status: 'completed'; providerOrderId?: string } = {
+                status: 'completed',
+            }
+            if (providerOrderId) {
+                update.providerOrderId = providerOrderId
+            }
 
-        if (!transaction) {
-            return null
-        }
-
-        if (transaction.status === 'completed') {
-            return transaction
-        }
-
-        await this.usersService.addBalancePln(transaction.senderId, transaction.amount)
-
-        transaction.status = 'completed'
-        if (providerOrderId) {
-            transaction.providerOrderId = providerOrderId
-        }
-
-        const savedTransaction = await transaction.save()
-
-        await this.messagesService
-            .createSystemNotification(
-                transaction.senderId,
-                'Doładowanie PayU',
-                `Doładowanie ${transaction.amount.toFixed(2)} PLN zostało zaksięgowane.`,
-                'success',
+            const claimed = await this.transactionModel.findOneAndUpdate(
+                {
+                    externalOrderId,
+                    type: 'payu_transfer',
+                    status: { $in: ['pending', 'failed'] },
+                },
+                { $set: update },
+                { new: true, ...(session ? { session } : {}) },
             )
-            .catch(() => null)
 
-        return savedTransaction
+            if (!claimed) {
+                const current = await this.transactionModel.findOne(
+                    { externalOrderId },
+                    null,
+                    session ? { session } : undefined,
+                )
+                return { transaction: current, credited: false }
+            }
+
+            try {
+                await this.usersService.addBalancePln(
+                    claimed.senderId,
+                    claimed.amount,
+                    session,
+                )
+            } catch (error) {
+                if (!session) {
+                    await this.transactionModel.updateOne(
+                        { _id: claimed._id, status: 'completed' },
+                        { $set: { status: 'pending' } },
+                    )
+                }
+                throw error
+            }
+
+            return { transaction: claimed, credited: true }
+        })
+
+        if (outcome.credited && outcome.transaction) {
+            await this.messagesService
+                .createSystemNotification(
+                    outcome.transaction.senderId,
+                    'Doładowanie PayU',
+                    `Doładowanie ${outcome.transaction.amount.toFixed(2)} PLN zostało zaksięgowane.`,
+                    'success',
+                )
+                .catch(() => null)
+        }
+
+        return outcome.transaction
     }
 
     async findPayuTopUpForUser(userId: string, externalOrderId: string) {
@@ -110,8 +152,20 @@ export class TransactionsService {
     }
 
     async bankTransfer(userId: string, receiverLogin: string, amount: number) {
+        const normalizedAmount = roundMoney(amount)
+        if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+            throw new BadRequestException('Invalid amount')
+        }
 
-        const sender = await this.usersService.findById(userId)
+        let sender
+        try {
+            sender = await this.usersService.findById(userId)
+        } catch (error) {
+            if (error instanceof NotFoundException) {
+                throw new BadRequestException('User not found')
+            }
+            throw error
+        }
 
         if (!sender) {
             throw new BadRequestException('User not found')
@@ -127,32 +181,73 @@ export class TransactionsService {
             throw new BadRequestException('Cannot transfer to yourself')
         }
 
-        if (sender.balance < amount) {
-            await this.messagesService
-                .createSystemNotification(
+        let savedTransaction: TransactionDocument
+        try {
+            savedTransaction = await runMoneyTransaction(this.connection, async (session) => {
+                const debit = await this.usersService.debitPlnIfSufficient(
                     userId,
-                    'Przelew odrzucony',
-                    'Niewystarczające środki na koncie – doładuj konto',
-                    'error',
+                    normalizedAmount,
+                    session,
                 )
-                .catch(() => null)
-            throw new BadRequestException('Insufficient funds')
+
+                if (!debit.ok && debit.reason === 'missing') {
+                    throw new BadRequestException('User not found')
+                }
+
+                if (!debit.ok) {
+                    throw new BadRequestException('Insufficient funds')
+                }
+
+                try {
+                    await this.usersService.addBalancePln(
+                        String(receiver._id),
+                        normalizedAmount,
+                        session,
+                    )
+                } catch (error) {
+                    if (!session) {
+                        await this.usersService.addBalancePln(userId, normalizedAmount)
+                    }
+                    throw error
+                }
+
+                const transaction = new this.transactionModel({
+                    senderId: userId,
+                    receiverAccount: receiver.login,
+                    amount: normalizedAmount,
+                    type: 'bank_transfer',
+                    status: 'completed',
+                })
+
+                try {
+                    return await transaction.save(session ? { session } : undefined)
+                } catch (error) {
+                    if (!session) {
+                        await this.usersService.addBalancePln(userId, normalizedAmount)
+                        await this.usersService.debitPlnIfSufficient(
+                            String(receiver._id),
+                            normalizedAmount,
+                        )
+                    }
+                    throw error
+                }
+            })
+        } catch (error) {
+            if (
+                error instanceof BadRequestException &&
+                error.message === 'Insufficient funds'
+            ) {
+                await this.messagesService
+                    .createSystemNotification(
+                        userId,
+                        'Przelew odrzucony',
+                        'Niewystarczające środki na koncie – doładuj konto',
+                        'error',
+                    )
+                    .catch(() => null)
+            }
+            throw error
         }
-
-        sender.balance -= amount
-        receiver.balance += amount
-
-        await sender.save()
-        await receiver.save()
-
-        const transaction = new this.transactionModel({
-            senderId: userId,
-            receiverAccount: receiver.login, // zapisujemy login odbiorcy
-            amount,
-            type: 'bank_transfer',
-        })
-
-        const savedTransaction = await transaction.save()
 
         await Promise.allSettled([
             this.messagesService.createSystemNotification(
@@ -164,7 +259,7 @@ export class TransactionsService {
             this.messagesService.createSystemNotification(
                 String(receiver._id),
                 'Nowy przelew',
-                `Otrzymałeś ${amount.toFixed(2)} PLN od ${sender.login}.`,
+                `Otrzymałeś ${normalizedAmount.toFixed(2)} PLN od ${sender.login}.`,
                 'info',
             ),
         ])
@@ -172,21 +267,56 @@ export class TransactionsService {
         return savedTransaction
     }
 
-    async getHistory(userId: string) {
+    async getHistory(userId: string, page = 1, limit = 20) {
+        const safeLimit = Math.min(50, Math.max(1, Math.trunc(limit) || 20))
+        const safePage = Math.max(1, Math.trunc(page) || 1)
         const user = await this.usersService.findById(userId)
+        const filter = {
+            status: 'completed',
+            $or: [
+                { senderId: userId },
+                { receiverAccount: user.login },
+            ],
+        }
 
-        return this.transactionModel
-            .find({
-                status: 'completed',
-                $or: [
-                    { senderId: userId },
-                    { receiverAccount: user.login },
-                ],
-            })
-            .sort({ createdAt: -1 })
+        const [items, total] = await Promise.all([
+            this.transactionModel
+                .find(filter)
+                .sort({ createdAt: -1 })
+                .skip((safePage - 1) * safeLimit)
+                .limit(safeLimit),
+            this.transactionModel.countDocuments(filter),
+        ])
+
+        return {
+            items,
+            page: safePage,
+            limit: safeLimit,
+            total,
+            hasMore: safePage * safeLimit < total,
+        }
     }
 
-    async getTransaction(id: string) {
-        return this.transactionModel.findById(id)
+    async getTransaction(id: string, userId: string) {
+        let transaction: TransactionDocument | null
+        try {
+            transaction = await this.transactionModel.findById(id)
+        } catch {
+            throw new NotFoundException('Transaction not found')
+        }
+
+        if (!transaction) {
+            throw new NotFoundException('Transaction not found')
+        }
+
+        const user = await this.usersService.findById(userId)
+        const isSender = String(transaction.senderId) === String(userId)
+        const isReceiver = transaction.receiverAccount === user.login
+
+        if (!isSender && !isReceiver) {
+            throw new ForbiddenException('Access denied')
+        }
+
+        return transaction
     }
 }
